@@ -263,7 +263,7 @@ namespace JoyGame
             // 敌人
             foreach (Enemy e in _enemies)
             {
-                Painter.Sprite(_app, _app.Assets.EnemyImage, e.X, e.Y, 24f, 210, 96, 96);
+                Painter.Sprite(_app, e.X, e.Y, 24f, 210, 96, 96);
                 if (e.Hp > 1f)
                 {
                     Painter.Fill(_app, e.X - 9f, e.Y - 17f, 18f * (e.Hp / 3f), 2f, 230, 120, 110, 200);
@@ -271,7 +271,7 @@ namespace JoyGame
             }
 
             // 玩家 + 朝向
-            Painter.Sprite(_app, _app.Assets.PlayerImage, _player.X, _player.Y, 26f, 110, 210, 150);
+            Painter.Sprite(_app, _player.X, _player.Y, 26f, 110, 210, 150);
             Painter.Line(_app, _player.X, _player.Y,
                          _player.X + _player.FacingX * 18f,
                          _player.Y + _player.FacingY * 18f, 180, 240, 210);

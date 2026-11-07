@@ -40,7 +40,7 @@ namespace JoyGame
                 Painter.Line(_app, 0f, y, w, y, 26, 30, 42);
             }
 
-            Painter.Sprite(_app, _app.Assets.PlayerImage, cx, h * 0.5f - 74f, 34f, 90, 200, 140);
+            Painter.Sprite(_app, cx, h * 0.5f - 74f, 34f, 90, 200, 140);
             Painter.TextCenter(_app, "JOY C# TOPDOWN", cx, h * 0.5f - 26f, big: true, r: 120, g: 220, b: 255);
             Painter.TextCenter(_app,
                 Texts.Pick(_app, "C# 业务逻辑 + joy 引擎（Mono 宿主）", "C# gameplay + joy engine (CoreCLR)"),

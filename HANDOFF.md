@@ -20,7 +20,7 @@ C 层创建的内存自动释放；同时要求生成器出错概率可控、后
 | 三端用法一致、同名同参数、句柄自动释放 | **已达成并实测** |
 | 出错概率可控（默认关闭、分级、CI 门禁、生成物入库） | **已达成** |
 | 覆盖面 | **668 / 1155 = 57.8%**，未达成「绝大多数」 |
-| 旧业务调用点迁移、删除旧胶水 | **前提缺口已查明，仍不能 1:1 迁移（见第 8 节 P4）** |
+| 旧业务调用点迁移、删除旧胶水 | **已达成（2026-11-08，见第 8 节 P4；精灵/文字宽度有降级）** |
 | L2 试点（`checkbox` 域 2 条） | **已打通，剩 72 条 L2** |
 | `jmath.h` | **134 个 `JOY_INLINE` 中 114 个已自动生成 220 条包装；20 个 mat44 未接（见第 8 节 P5）** |
 | L3 / X | **未处理** |
@@ -46,8 +46,10 @@ C 层创建的内存自动释放；同时要求生成器出错概率可控、后
 4. **三端契约统一**：脚本侧一律 `Joy.Api.Bindings.<PascalName>`，参数顺序与 `joy.h`
    一致；句柄只以不透明对象出现，GC 时自动 `joy_obj_release()`。方法名只能来自
    `api/naming.js`，不许后端自己写一套 `pascal()`。
-5. **新旧并行**：不删旧 `modules/*/bindings/` 手写胶水，不改 C# 业务调用点。
-   旧 Lua 宿主的全局表是小写 `joy`，新链路是大写 `Joy`，两者刻意并存。
+5. **旧胶水已删（2026-11-08）**：`modules/*/bindings/legacy/` 三个目录、
+   `JOY_ENABLE_LEGACY_BINDINGS` 开关、`gen_csclib.js` 全部移除，脚本层只剩
+   `Joy.Api.Bindings`；宿主接口 `Joy.Host` / `Joy.Input` 留在 `modules/cs/bindings/host/`
+   并始终注册。Lua/JS 宿主仍创建空的全局 `joy` 表，只用于挂脚本自己的回调。
 6. **不要手改生成物**：改 `api/emit_*.js` / `gen_bindings.js` → 重生成 → 一起提交。
 7. **CRLF**：Windows `core.autocrlf` 会把 LF 转 CRLF；`--check` 用 `normEol()` 归一后比较。
    删掉它 CI 会误报。
@@ -281,10 +283,9 @@ L3 的 229 条成因：`非不透明指针 / 输出参数` 98、`未知类型需
       [api] lua selftest PASS
       [api] js selftest PASS
       [api.cs] PASS ... destroyed=1 real=True opaque=True vec2=4,6 dot=11
-      [smoke] PASS api=True abi=True play=2 ...
-8. legacy 开关（可选但建议）：cmake -S . -B build -DJOY_ENABLE_LEGACY_BINDINGS=OFF
-   → cmake --build build --config Release --parallel 必须 0 error；再用 =ON 重新
-   configure + build + --smoke 180 恢复默认（业务仍依赖旧 Joy.* API，OFF 只验编译）
+      [smoke] PASS api=True play=2 gameover=True moved=161.0 fired=9 kills=1 enemies=3
+   （`abi=` 项随旧胶水删除：结构体按值 ABI 探针原在 `csclib_draw.c`，生成链路不传结构体）
+8. legacy 开关已随胶水删除，本项作废；改动 `modules/` 结构后只跑第 6/7 项即可
 9. CI 门禁篡改测试（可选但建议）：手改任一生成物 → --check 必须失败；恢复后必须通过
 10. git status 两仓 + gitlink 对齐；分别 push
 ```
@@ -338,9 +339,20 @@ r,g,b,a, ...)` 共 13 个值），不是单个对象，参数个数与 `joy.h` �
 按第 5 节成因分类手写 thunk：输出参数 98 条最有希望做成通用模式；
 回调 8 条、varargs 4 条、数组 5 条建议逐个人工处理。
 
-**P4：业务收尾（前提缺口已查明，暂不能 1:1 迁移）**
-把约 39 处旧 `Joy.*` C# 调用点迁到 `Joy.Api.Bindings.*`，确认 public API 再无 `IntPtr`，
-再删约 70 个旧胶水 `.c` 文件（这一步之前别删，新旧并行是安全网）。
+**P4：业务收尾（已完成 2026-11-08）**
+- 三个 `bindings/legacy/` 目录、`JOY_ENABLE_LEGACY_BINDINGS` 开关、`gen_csclib.js`
+  与 `scripts/InternalCalls.cs` 全部删除；`Joy.Api.Bindings` 是脚本层唯一绑定入口。
+- 主仓业务迁移完毕：`Painter.cs` 改走 `R2dSetColorf` + `ShapeDrawRectangle` /
+  `ShapeDrawLineF` / `JtextPrintx`，`Assets.cs` 改走 `FontCreate`，`GameApp.R2d`
+  从 `IntPtr` 变 `Jr2d`（经 `HostHandles.R2d()` 借用宿主渲染器）。
+  **已知降级**：`image_draw1` 是 `jrect_t*` 参数（L3 未开放），精灵统一画色块；
+  `jtext_measurex` 同为 L3，居中按「字符数 × 字号 × 0.58」估算。
+  文本长度改传 UTF-8 字节数（`jtext_printx` 的 `len` 是字节数，旧代码传 strlen，
+  迁到 C# 后若照抄 `text.Length` 会把中文截成 1/3）。
+- 结构体按值 ABI 探针（`abi_vec2_sum` / `abi_rect_area`）随 `csclib_draw.c` 删除：
+  生成链路不跨 ABI 传结构体，探针失去被测对象；冒烟输出不再有 `abi=` 项。
+- 后续若要恢复精灵绘制 / 精确文字宽度，需要给 `image_draw1`、`jtext_measurex`
+  手写 thunk（P3），三端会同时受益。
 
 2026-11-07 核对结论：**旧胶水是 cs 模块私有 internal call（`Joy.Draw` / `Input` /
 `Host` / `Image` / `Font`），与 `joy.h` 导出的 `JOY_API` 不是同一组函数**。现有 448 条里
@@ -432,10 +444,16 @@ public 转换入口。所以 P4 不是「换名」，而是「先补能力、再
   对方各平台构建全断，而收益只有本仓目录整洁。转发 CMakeLists 救不了物理目录，
   git 软链在 Windows checkout 又不可靠。结论：第三方与引擎平级，不进 `vendor/`。
 - **`bindings/` 分链路**：每个后端拆成 `bindings/api/`（新链路）、
-  `bindings/host/`（仅 cs，提供宿主入口 `main.cpp` / `systems/input_system.h` 直接调用的 `csx_input_*` / `csx_host_*`）、
-  `bindings/legacy/`（旧手写胶水）。新增 `JOY_ENABLE_LEGACY_BINDINGS`（默认 ON），
-  `jluax.c` / `jsx.c` / `jcsx.c` 的旧注册块用 `#ifdef` 保护。host/ 是关掉开关后
-  实测暴露出来的真实依赖：宿主入口不属于旧业务胶水，必须始终编译。
+  `bindings/host/`（仅 cs：宿主入口 `main.cpp` / `systems/input_system.h` 直接调用的
+  `csx_input_*` / `csx_host_*`，以及把宿主自建窗口/渲染器登记成借用句柄的 `csopen_borrow`）。
+  2026-11-08 起 `bindings/legacy/`（旧手写胶水）与 `JOY_ENABLE_LEGACY_BINDINGS`
+  开关整体删除，`jluax.c` / `jsx.c` / `jcsx.c` 的旧注册块一并移除。
+  host/ 是关掉开关后实测暴露出来的真实依赖：宿主入口不属于旧业务胶水，必须始终编译。
+- **宿主对象 → 脚本句柄的桥**：`bindings/host/csclib_borrow.c` 按 C 类型名把宿主裸指针
+  登记成 `joy_obj` 借用句柄（dtor=NULL，所有权仍在宿主），C# 侧经
+  `modules/cs/scripts/HostHandles.cs`（`Joy.Api.HostHandles.R2d(IntPtr)`）拿到
+  `Jr2d` 强类型句柄。主仓业务因此可以在保留「C 宿主建窗口/渲染器」架构的前提下
+  全程走 `Joy.Api.Bindings` 绘制。
 - **`examples/` 正名**：`test/` 里 5 个文件全是被注释的示例片段、无 main、从未被
   任何 target 编译，改名 `examples/` 并明确不参与构建。
 - **拆 `joy.h`**：2585 行伞形头按行段切成 `include/joy/{defs,types,api}.h`

@@ -1,14 +1,19 @@
 using System;
+using Joy.Api;
 
 namespace JoyGame
 {
     /// <summary>
     /// 应用外壳：持有渲染句柄、资源、输入快照与当前场景。
     /// 每帧由宿主的 C# 入口 Host.OnFrame 驱动 Tick。
+    ///
+    /// 窗口与渲染器仍由 C 宿主创建（main.cpp 的 create_window / r2d_create），
+    /// 这里用 HostHandles 把裸地址登记成生成链路的借用句柄——句柄归宿主所有，
+    /// 只在脚本层当作绘制入口使用。
     /// </summary>
     internal sealed class GameApp
     {
-        public IntPtr R2d { get; }
+        public Jr2d R2d { get; }
         public int Width { get; }
         public int Height { get; }
         public int SmokeFrames { get; }
@@ -24,7 +29,7 @@ namespace JoyGame
 
         public GameApp(IntPtr r2d, int width, int height, int smokeFrames)
         {
-            R2d = r2d;
+            R2d = HostHandles.R2d(r2d);
             Width = width;
             Height = height;
             SmokeFrames = smokeFrames;

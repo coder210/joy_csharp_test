@@ -27,8 +27,6 @@ namespace JoyGame
         private bool _sawGameOver;
         private bool _killedPlayer;
         private bool _done;
-        private bool _checkedAbi;
-        private bool _structAbiOk;
 
         public void BeforeTick(GameApp app)
         {
@@ -56,21 +54,12 @@ namespace JoyGame
 
         public void AfterTick(GameApp app)
         {
-            if (!_checkedAbi)
-            {
-                _checkedAbi = true;
-                float sum = Joy.Draw.abi_vec2_sum(new Joy.vec2_t { x = 1.5f, y = 2.5f });
-                float area = Joy.Draw.abi_rect_area(new Joy.jrect_t { x = 0f, y = 0f, w = 4f, h = 5f });
-                _structAbiOk = Math.Abs(sum - 4f) < 0.001f && Math.Abs(area - 20f) < 0.001f;
-            }
-
             Observe(app);
             if (_done || app.Frame < AssertFrame) return;
 
             _done = true;
             bool ok = true;
             ok &= ApiBindingSmoke.Passed; // IDL 新链路：强类型对象 + 自动释放
-            ok &= _structAbiOk;         // 结构体按值传递的 ABI 正确
             ok &= _playCount >= 2;      // Menu→Play 与 GameOver→Play 都发生过
             ok &= _sawGameOver;
             ok &= _maxMoved > 5f;       // 输入驱动了移动
@@ -79,8 +68,8 @@ namespace JoyGame
             ok &= _enemyMoved;          // 敌人 AI 在追玩家
 
             string detail = string.Format(CultureInfo.InvariantCulture,
-                "api={0} abi={1} play={2} gameover={3} moved={4:0.0} fired={5} kills={6} enemies={7}",
-                ApiBindingSmoke.Passed, _structAbiOk, _playCount, _sawGameOver,
+                "api={0} play={1} gameover={2} moved={3:0.0} fired={4} kills={5} enemies={6}",
+                ApiBindingSmoke.Passed, _playCount, _sawGameOver,
                 _maxMoved, _maxFired, _maxKills, _maxEnemies);
 
             if (ok)

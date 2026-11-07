@@ -1,10 +1,15 @@
 using System;
+using Joy.Api;
 
 namespace JoyGame
 {
     /// <summary>
-    /// 运行期资源句柄。加载失败时返回 IntPtr.Zero，渲染层会退化成纯色矩形，
-    /// 这样缺资源也能跑起来（冒烟环境不依赖美术资源完整性）。
+    /// 运行期资源句柄。
+    ///
+    /// 字体走生成链路（Joy.Api.Bindings.FontCreate → Joy.Api.Font），句柄由句柄表
+    /// 管理，GC 时自动 font_destroy。
+    /// 图片没有走：生成链路里 image_draw1 是 jrect_t* 指针参数（L3 未开放），
+    /// 拿不到绘制入口，精灵统一退化成纯色矩形（Painter.Sprite 处理）。
     /// </summary>
     internal sealed class Assets
     {
@@ -20,44 +25,33 @@ namespace JoyGame
             "C:/Windows/Fonts/Deng.ttf",
         };
 
-        public IntPtr PlayerImage { get; private set; }
-        public IntPtr EnemyImage { get; private set; }
-        public IntPtr FontSmall { get; private set; }
-        public IntPtr FontBig { get; private set; }
+        public Font FontSmall { get; private set; }
+        public Font FontBig { get; private set; }
 
         /// <summary>是否成功加载到含中文字形的字体；界面文案据此选择中文或 ASCII 兜底。</summary>
         public bool HasCjkFont { get; private set; }
 
-        public float PlayerW { get; private set; }
-        public float PlayerH { get; private set; }
-        public float EnemyW { get; private set; }
-        public float EnemyH { get; private set; }
-
-        public void Load(IntPtr r2d)
+        public void Load(Jr2d r2d)
         {
-            PlayerImage = Joy.Image.image_create(r2d, "assets/sprites/player.png");
-            EnemyImage = Joy.Image.image_create(r2d, "assets/sprites/enemy.png");
-
-            // 靠 font_create 返回 Zero 判断文件是否存在/可用（裁剪 BCL 里没有 File.Exists）。
-            // 命中第一个候选后就用同一路径建两个字号，避免重复探测。
+            // FontCreate 在底层返回 NULL 时抛 InvalidOperationException（生成代码的约定），
+            // 逐个候选 try 一次即可，命中后两个字号共用同一路径。
             foreach (string path in CjkFonts)
             {
-                IntPtr small = Joy.Font.font_create(path, 12);
-                if (small == IntPtr.Zero) continue;
-                FontSmall = small;
-                FontBig = Joy.Font.font_create(path, 22);
-                HasCjkFont = true;
-                break;
+                try
+                {
+                    FontSmall = Bindings.FontCreate(path, 12);
+                    FontBig = Bindings.FontCreate(path, 22);
+                    HasCjkFont = true;
+                    break;
+                }
+                catch (InvalidOperationException)
+                {
+                    FontSmall = null;
+                    FontBig = null;
+                }
             }
 
-            PlayerW = PlayerImage != IntPtr.Zero ? Joy.Draw.image_width(PlayerImage) : 16f;
-            PlayerH = PlayerImage != IntPtr.Zero ? Joy.Draw.image_height(PlayerImage) : 16f;
-            EnemyW = EnemyImage != IntPtr.Zero ? Joy.Draw.image_width(EnemyImage) : 16f;
-            EnemyH = EnemyImage != IntPtr.Zero ? Joy.Draw.image_height(EnemyImage) : 16f;
-
-            if (PlayerImage == IntPtr.Zero) Joy.Host.log("[warn] missing assets/sprites/player.png");
-            if (EnemyImage == IntPtr.Zero) Joy.Host.log("[warn] missing assets/sprites/enemy.png");
-            if (FontSmall == IntPtr.Zero) Joy.Host.log("[warn] no usable font, HUD text disabled");
+            if (FontSmall == null) Joy.Host.log("[warn] no usable font, HUD text disabled");
         }
     }
 }
