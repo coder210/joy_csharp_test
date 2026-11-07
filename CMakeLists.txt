@@ -16,24 +16,24 @@ project(joy_csharp_test_app C CXX)
 
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
-# ---- joy 源码树（其下有 joy.h）---------------------------------------------
+# ---- joy 源码树（其下有 include/joy/joy.h）---------------------------------------------
 # 默认用仓内子模块 third_party/joy（git submodule update --init），
 # 也兼容与 joy 源码树同级、或从别的工程里复用 joy 的场景。
-set(JOY_SOURCE_DIR "" CACHE PATH "joy 源码目录（其下须有 joy.h）")
-if(NOT EXISTS "${JOY_SOURCE_DIR}/joy.h")
+set(JOY_SOURCE_DIR "" CACHE PATH "joy 源码目录（其下须有 include/joy/joy.h）")
+if(NOT EXISTS "${JOY_SOURCE_DIR}/include/joy/joy.h")
     foreach(_joy_cand
         "${CMAKE_CURRENT_SOURCE_DIR}/third_party/joy"
         "${CMAKE_CURRENT_SOURCE_DIR}/../joy"
         "${CMAKE_CURRENT_SOURCE_DIR}/../joy_topdown_template/third_party/joy")
-        if(EXISTS "${_joy_cand}/joy.h")
-            set(JOY_SOURCE_DIR "${_joy_cand}" CACHE PATH "joy 源码目录（其下须有 joy.h）" FORCE)
+        if(EXISTS "${_joy_cand}/include/joy/joy.h")
+            set(JOY_SOURCE_DIR "${_joy_cand}" CACHE PATH "joy 源码目录（其下须有 include/joy/joy.h）" FORCE)
             break()
         endif()
     endforeach()
 endif()
-if(NOT EXISTS "${JOY_SOURCE_DIR}/joy.h")
+if(NOT EXISTS "${JOY_SOURCE_DIR}/include/joy/joy.h")
     message(FATAL_ERROR
-        "joy_csharp_test_app: 找不到 joy 源码树，请设置 -DJOY_SOURCE_DIR=<含 joy.h 的目录>")
+        "joy_csharp_test_app: 找不到 joy 源码树，请设置 -DJOY_SOURCE_DIR=<含 include/joy/joy.h 的目录>")
 endif()
 
 # ---- C# 运行时：joy 子项目 runtimes/ 提供 -----------------------------------
@@ -104,30 +104,28 @@ set(JOY_BINDINGS_DLL "${CMAKE_CURRENT_SOURCE_DIR}/build/csharp/Joy.Bindings.dll"
     CACHE FILEPATH "Joy.Bindings.dll（joy 子项目 Joy.Bindings.csproj 的产物）")
 
 # ---- joy 依赖的第三方工程 ---------------------------------------------------
+# 三个第三方子工程先建 target，随后 joy 作为子目录引入构建契约（joy::all）；
+# joy/CMakeLists.txt 在子目录模式下不会重复 add_subdirectory 它们。
 add_subdirectory("${JOY_SOURCE_DIR}/msgpack" "${CMAKE_BINARY_DIR}/msgpack")
 add_subdirectory("${JOY_SOURCE_DIR}/spine"   "${CMAKE_BINARY_DIR}/spine")
 add_subdirectory("${JOY_SOURCE_DIR}/SDL"     "${CMAKE_BINARY_DIR}/SDL")
-include("${JOY_SOURCE_DIR}/joy_add.cmake")
+
+# ---- joy 本体：源码注入（joy::all INTERFACE + 显式清单）---------------------
+# MODULES 通过全局属性传给三个后端模块（默认全部关闭）。启用 lua / js 是为了
+# 让 Joy.Api.Bindings.* 在三个后端都有真实可跑的验证，而不是只写不编。
+set_property(GLOBAL PROPERTY JOY_REQUESTED_MODULES cs lua js)
+add_subdirectory("${JOY_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/joy")
 
 # ---- 宿主可执行文件 --------------------------------------------------------
-# 三端绑定层由 joy 子项目提供：MODULES 会把对应模块的源码直接编入本 target
-# （不建库、不产 DLL）。cs 对外只暴露 joy_csharp.h，lua / js 各暴露 joy_lua.h / joy_js.h。
-# 启用 lua / js 是为了让 Joy.Api.Bindings.* 在三个后端都有真实可跑的验证，
-# 而不是只写不编。
-add_executable(joy_csharp_test_app main.c)
-joy_add_sources(joy_csharp_test_app MODULES cs lua js)
-
-# ---- joy 共享绑定运行层（P1）----------------------------------------------
-# api/ 下的运行时与生成 thunk 与后端无关，先在主仓显式编入宿主做 C 层自检；
-# 等三个后端都接上后由 joy_add.cmake 统一装配。生成物 thunks_generated.c 入库，
-# 由 api/gen_bindings.js --check 保证与 joy.idl 同步。
-# cs 侧的 api_generated.c 位于 modules/cs/bindings/，已被该模块的 GLOB 自动收进
-# joy_module_cs，无需在这里重复添加；它调用的 joy_api_call() 由 joy_thunk.c 提供。
-target_sources(joy_csharp_test_app PRIVATE
-    "${JOY_SOURCE_DIR}/api/runtime/joy_value.c"
-    "${JOY_SOURCE_DIR}/api/runtime/joy_obj.c"
-    "${JOY_SOURCE_DIR}/api/runtime/joy_thunk.c"
-    "${JOY_SOURCE_DIR}/api/thunks_generated.c")
+add_executable(joy_csharp_test_app
+    main.cpp                        # 入口薄层：SDL_AppInit/AppEvent/AppIterate/AppQuit
+    context.h                       # 宿主上下文（窗口/r2d/csx/方法句柄/帧计时）
+    host/clr_host.h
+    host/clr_host.cpp               # CLR 装配：运行目录、程序集、Host.OnInit/OnFrame
+    systems/input_system.h          # SDL 事件 → csx 输入桥
+    systems/smoke_system.h          # --smoke 的 C / lua / js 三段自检
+    )
+target_link_libraries(joy_csharp_test_app PRIVATE joy::all)
 
 # ---- Visual Studio：把 C# 工程一并挂进生成的解决方案 -----------------------
 # 仅 VS 生成器生效，其它生成器忽略。C# 仍由 dotnet build 产出 JoyGame.dll，

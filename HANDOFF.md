@@ -19,16 +19,16 @@ C 层创建的内存自动释放；同时要求生成器出错概率可控、后
 |---|---|
 | 三端用法一致、同名同参数、句柄自动释放 | **已达成并实测** |
 | 出错概率可控（默认关闭、分级、CI 门禁、生成物入库） | **已达成** |
-| 覆盖面 | **448 / 935 = 47.9%**，未达成「绝大多数」 |
+| 覆盖面 | **668 / 1155 = 57.8%**，未达成「绝大多数」 |
 | 旧业务调用点迁移、删除旧胶水 | **前提缺口已查明，仍不能 1:1 迁移（见第 8 节 P4）** |
 | L2 试点（`checkbox` 域 2 条） | **已打通，剩 72 条 L2** |
-| L3 / X、`jmath.h` | **未处理** |
+| `jmath.h` | **134 个 `JOY_INLINE` 中 114 个已自动生成 220 条包装；20 个 mat44 未接（见第 8 节 P5）** |
+| L3 / X | **未处理** |
 
-**不要把「三端接通」误读成「目标完成」**：管道通了，覆盖面还差一半多。
-另外，448 条里只有 4 条（`GetTicks` / `JtextCacheGetCount` / `LcgRandomCreate` /
-`LcgRandomNext`）在三端验证过完整运行时语义，另有 2 条（`JpmWaveSeed` /
-`Murmur3Hash`）在 C# 端验证过真实返回值；其余 442 条只验证「注册成功 + argc
-守卫生效」（其中 2 条 L2 另有「展开参数个数 + 类型守卫」专项自检），这是刻意保留的边界。
+**不要把「三端接通」误读成「目标完成」**：管道通了，覆盖面还差四成。
+另外，668 条里只有 13 条验证过真实返回值（4 条三端完整语义、`JpmWaveSeed` /
+`Murmur3Hash`、7 条 `Jmath*` 数学函数，见第 7 节自检）；其余 655 条只验证
+「注册成功 + argc 守卫生效」（其中 2 条 L2 另有「展开参数个数 + 类型守卫」专项自检）。
 
 ---
 
@@ -37,9 +37,10 @@ C 层创建的内存自动释放；同时要求生成器出错概率可控、后
 1. **两个 git 仓**：主仓 `https://github.com/coder210/joy_csharp_test.git`、
    子模块 `https://github.com/coder210/joy.git`。改子仓内容要在子仓提交推送，
    再回主仓提交更新后的 `third_party/joy` gitlink。只推一边会让 CI 拿错代码。
-2. **生成物入库 + 门禁**：`api/coverage.md`、`api/thunks_generated.c`、
-   `modules/cs/bindings/api_generated.c`、`modules/cs/scripts/Api.generated.cs`
-   四个生成物必须提交，CI 跑 `--check` 校验无 diff。改生成器不重生成 = CI 红。
+2. **生成物入库 + 门禁**：`api/generated/coverage.md`、`api/generated/thunks_generated.c`、
+   `api/generated/jmath_wrappers.{h,c}`、`modules/cs/bindings/api/api_generated.c`、
+   `modules/cs/scripts/Api.generated.cs` 都要提交，CI 跑 `--check` 校验无 diff。
+   改生成器不重生成 = CI 红。
 3. **生成 ≠ 启用**：`joy.idl` 默认 `status: off`；只有 `--enable` 逐条过闸才置 `on`。
    **开放 ≠ 业务已调用 / 语义已验证**。
 4. **三端契约统一**：脚本侧一律 `Joy.Api.Bindings.<PascalName>`，参数顺序与 `joy.h`
@@ -60,7 +61,7 @@ C 层创建的内存自动释放；同时要求生成器出错概率可控、后
 
 | 文件 | 维护 | 作用 |
 |---|---|---|
-| `gen_bindings.js` | 人工 | 总入口：解析 `joy.h` → 维护 IDL → 产出 4 个生成物；`--scan` / `--enable` / `--disable` / `--check`。零 npm 依赖 |
+| `gen_bindings.js` | 人工 | 总入口：解析 `include/joy/{defs,api}.h` → 维护 IDL → 产出 4 个生成物；`--scan` / `--enable` / `--disable` / `--check`。零 npm 依赖 |
 | `naming.js` | 人工 | **三端共用**的 `isOpaque` / `methodName`(PascalCase) / `handleClass` |
 | `emit_thunks.js` | 人工 | 生成 `thunks_generated.c`：每条 on 的 L0/L1 一个纯 C thunk、`s_thunks[]` 注册表、`joy_api_selftest()`；导出 `canThunk` / `ownsIssue` |
 | `emit_cs.js` | 人工 | 生成 cs 侧 C icall 与 C# 强类型包装；导出 `canEmitCs` |
@@ -94,8 +95,12 @@ domain, name(C snake_case), script_name(PascalCase), fn, argc, arg_kinds[], ret_
 
 | 文件 | 作用 |
 |---|---|
-| `main.c` | `--smoke` 分支依次跑 C / lua / js / cs 四段自检 |
-| `CMakeLists.txt` | `joy_add_sources(... MODULES cs lua js)`；显式编入 `runtime/*.c` + `thunks_generated.c` |
+| `main.cpp` | 入口薄层：参数解析 + `SDL_AppInit/AppEvent/AppIterate/AppQuit` |
+| `context.h` | `struct Context`：窗口 / r2d / csx / Host 方法句柄 / 帧计时，不再散成 `static` 全局 |
+| `host/clr_host.{h,cpp}` | CLR 装配：exe 目录 + `MONO_LIB_DIR`、程序集加载、`Host.OnInit/OnFrame/OnShutdown` |
+| `systems/input_system.h` | SDL 事件 → `csx_input_*` 输入桥（鼠标坐标换算到逻辑分辨率） |
+| `systems/smoke_system.h` | `--smoke` 的 C / lua / js 三段自检 + dummy 视频/软件渲染 hint |
+| `CMakeLists.txt` | `set_property(GLOBAL PROPERTY JOY_REQUESTED_MODULES cs lua js)` + `add_subdirectory(joy)` + `joy::all`；宿主源码显式列在 `add_executable` |
 | `csharp/test/ApiBindingSmoke.cs` | C# 侧自检（调用、强类型对象、GC 自动释放） |
 | `csharp/test/SmokeScript.cs` | `ok &= ApiBindingSmoke.Passed`，输出 `[smoke] PASS api=True ...` |
 | `.github/workflows/windows-build.yml` | Node 20 + `--check` 门禁 + 冒烟四条断言 |
@@ -106,7 +111,7 @@ domain, name(C snake_case), script_name(PascalCase), fn, argc, arg_kinds[], ret_
 ## 3. 数据流
 
 ```text
-                    joy.h ──gen_bindings.js──> joy.idl ──> 4 个入库生成物
+                    include/joy/{defs,api}.h ──gen_bindings.js──> joy.idl ──> 4 个入库生成物
                                                   │
 脚本层（三端同名）                                 │
 Joy.Api.Bindings.GetTicks()                       │
@@ -136,11 +141,11 @@ C# 例外：Mono internal call 必须静态绑定，所以由 `emit_cs.js` 生�
 
 ```powershell
 # 契约（默认生成 4 个产物；--check 只读；--scan 会保留 status/owns/note）
-node third_party/joy/api/gen_bindings.js
-node third_party/joy/api/gen_bindings.js --scan
-node third_party/joy/api/gen_bindings.js --enable L0|L1|all|domain:<名>|name:<API>
-node third_party/joy/api/gen_bindings.js --disable <同样的选择子>
-node third_party/joy/api/gen_bindings.js --check
+node third_party/joy/api/tools/gen_bindings.js
+node third_party/joy/api/tools/gen_bindings.js --scan
+node third_party/joy/api/tools/gen_bindings.js --enable L0|L1|all|domain:<名>|name:<API>
+node third_party/joy/api/tools/gen_bindings.js --disable <同样的选择子>
+node third_party/joy/api/tools/gen_bindings.js --check
 
 # 构建
 dotnet build third_party/joy/modules/cs/Joy.Bindings.csproj -c Release -o build/csharp
@@ -165,13 +170,13 @@ Pop-Location
 
 | 项 | 数量 |
 |---|---|
-| `joy.h` 的 `JOY_API` 声明 / IDL 条目 | 935 |
-| 已开放 `status: on` | **448**（含 L2 试点 2 条） |
-| L0 / L1 / L2 / L3 / X | 44 / 538 / 74 / 229 / 50 |
+| `include/joy/{defs,api}.h` 的 `JOY_API` 声明 / IDL 条目 | 1155（含 220 条 jmath 包装） |
+| 已开放 `status: on` | **668**（含 L2 试点 2 条 + jmath 包装 220 条） |
+| L0 / L1 / L2 / L3 / X | 264 / 538 / 74 / 229 / 50 |
 | 所有权待裁决（`ownsIssue`） | 38 |
 | 缺 `owns` | 38 |
 | orphan | 0 |
-| `joy.h` 中值类型 `typedef struct` | 48 |
+| `include/joy/{defs,types}.h` 中值类型 `typedef struct` | 48 |
 
 两个 38 是同一批条目：P2-B 数据质量一刀把 42 条错误推断逐条裁决完，
 4 条补上合规 dtor（`create_window` / `simple_fps_create` / `r2d_wrap` /
@@ -205,7 +210,7 @@ L3 的 229 条成因：`非不透明指针 / 输出参数` 98、`未知类型需
 
 **生成器**
 - 块注释里出现 `modules/*/bindings/` 会提前闭合 JS 注释；`stripComments()` 必须保留换行，否则 `source` 行号漂移。
-- `collectStructs()` 必须同时读 `joy.h` 和 `jmath.h`，否则 `vec2_t` 等被误判为 L3。
+- `collectStructs()` 必须同时读 `defs.h` / `types.h` / `jmath.h`，否则 `vec2_t` 等被误判为 L3。
 - `get_ticks` / `find_*` 这类通用动词开头的名字，domain 要用第二段（`GENERIC_FIRST`）。
 - Windows CRLF：`--check` 比较前必须 `normEol()`，已验证模拟 CRLF checkout 通过且能抓到真实 diff。
 - L2 展开试点：结构体重组必须按**字段名**赋值，不能按偏移 `memcpy`（padding 未知）；
@@ -255,25 +260,33 @@ L3 的 229 条成因：`非不透明指针 / 输出参数` 98、`未知类型需
 - `modules/<name>/CMakeLists.txt` 用 `file(GLOB bindings/*.c)`，新建适配 .c 会自动被收集，不必手改 CMake。
 - `joy_add_sources(... MODULES ...)` 的 `MODULES` 是 multi-value，可写 `cs lua js`。
 - 两仓分别提交推送；主仓 gitlink 必须指向子仓实际 HEAD。
-- `--smoke` 在模块关闭时 stub 返回 `"lua/disabled"` / `"js/disabled"`，`main.c` 把它当「跳过」而非失败。
+- `--smoke` 在模块关闭时 stub 返回 `"lua/disabled"` / `"js/disabled"`，`systems/smoke_system.h` 把它当「跳过」而非失败。
 
 ---
 
 ## 7. 验证清单（每刀结束必跑）
 
 ```text
-1. node third_party/joy/api/gen_bindings.js --check          → "check OK: 935 IDL entries ..."
-2. dotnet build Joy.Bindings.csproj -c Release -o build/csharp → 0 warning / 0 error
-3. dotnet build csharp/JoyGame.csproj -c Release -o build/csharp → 0 warning / 0 error
-4. cmake --build build --config Release --parallel          → 0 error；新增 .c 不应产生 C4090 等告警
-5. --smoke 180（dummy 驱动）→ exit 0 且必须同时出现：
+1. node third_party/joy/api/tools/jmath_wrap.js                   → "220 wrappers generated"
+   （改过 jmath.h 或增删契约头时才需要；生成 api/generated/jmath_wrappers.{h,c}）
+2. node third_party/joy/api/tools/gen_bindings.js --scan          → 契约头有变更时才跑
+3. node third_party/joy/api/tools/gen_bindings.js --check          → "check OK: 1155 IDL entries ..."
+   单一门禁，已含 jmath_wrappers.{h,c}、include/joy/joy.h 的 include 行、报告与三端胶水
+4. dotnet build Joy.Bindings.csproj -c Release -o build/csharp → 0 warning / 0 error
+5. dotnet build csharp/JoyGame.csproj -c Release -o build/csharp → 0 warning / 0 error
+6. cmake -S . -B build → cmake --build build --config Release --parallel
+   → 0 error；新增 .c 不应产生 C4090 等告警（源码清单改过必须重新 configure）
+7. --smoke 180（dummy 驱动）→ exit 0 且必须同时出现：
       [api] selftest PASS
       [api] lua selftest PASS
       [api] js selftest PASS
-      [api.cs] PASS ... destroyed=1 real=True opaque=True
+      [api.cs] PASS ... destroyed=1 real=True opaque=True vec2=4,6 dot=11
       [smoke] PASS api=True abi=True play=2 ...
-6. CI 门禁篡改测试（可选但建议）：手改任一生成物 → --check 必须失败；恢复后必须通过
-7. git status 两仓 + gitlink 对齐；分别 push
+8. legacy 开关（可选但建议）：cmake -S . -B build -DJOY_ENABLE_LEGACY_BINDINGS=OFF
+   → cmake --build build --config Release --parallel 必须 0 error；再用 =ON 重新
+   configure + build + --smoke 180 恢复默认（业务仍依赖旧 Joy.* API，OFF 只验编译）
+9. CI 门禁篡改测试（可选但建议）：手改任一生成物 → --check 必须失败；恢复后必须通过
+10. git status 两仓 + gitlink 对齐；分别 push
 ```
 
 `joy_api_selftest()` 对每条开放 API 故意传错 `argc` 调一次 `joy_api_call()`：
@@ -281,9 +294,11 @@ thunk 第一行就返回，**不执行任何 joy 业务函数**，因此批量�
 API 不会在自检里被真的调用。别把这个机制改成「真的调用每条 API」。
 对开放的 L2 试点条目，另用「展开后的正确 argc + 全 `JOY_V_NULL` 参数」调一次，
 期望 `JOY_ERR_TYPE`：验证展开序列与 `arg_kinds[]` 生效，同样不执行业务函数。
-C# 侧的 `ApiBindingSmoke` 另做两类真实断言：调用 `JpmWaveSeed` / `Murmur3Hash`
-校验返回值，以及反射确认 public API 无 `IntPtr`；它们并入 `[api.cs] PASS` 与
-`[smoke] PASS`，是「真实调用语义」与「argc 守卫」的分界线。
+C# 侧的 `ApiBindingSmoke` 另做真实断言：调用 `JpmWaveSeed` / `Murmur3Hash` /
+`JmathVec2*` 校验返回值，并反射确认 public API 无 `IntPtr`；Lua 侧的
+`luax_api_selftest()` 也真的调用 `JmathVec2*` 校验 vec2 加法。它们并入
+`[api.cs] PASS` / `[api] lua selftest PASS` 与 `[smoke] PASS`，是「真实调用语义」
+与「argc 守卫」的分界线。
 
 ---
 
@@ -346,9 +361,121 @@ public 转换入口。所以 P4 不是「换名」，而是「先补能力、再
   断言参数 / 返回类型里没有 `IntPtr`。
 `--smoke 180` 输出 `[api.cs] PASS ... real=True opaque=True`，两项并入 `[smoke] PASS`。
 
-**P5：`jmath.h`**
-1756 行、134 个 `JOY_INLINE`、10 个 `typedef struct`，没有 `JOY_API`；
-目前只在 `coverage.md` 做粗统计，需单独解析并映射成值类型/记录。
+**P5：`jmath.h`（已完成：自动生成器覆盖 114 / 134 个函数）**
+`jmath.h` 的 134 个 `JOY_INLINE` 是静态内联定义，没有外部符号，生成器只认
+`JOY_API` 声明。新增 `api/tools/jmath_wrap.js`：解析 `jmath.h` 的函数签名与 10 个值类型
+布局，生成 `api/generated/jmath_wrappers.{h,c}` 共 **220 条全标量包装**
+（`--scan` → `--enable domain:jmath` → 开放 461 → 668）。`joy.h` 只留一行
+`#include "../../api/generated/jmath_wrappers.h"`，`gen_bindings.js` 把该头当作第二个
+契约输入源；`--check` 直接调用包装模块的 `check()`，不再起子进程。
+规则：结构体按值入参按字段展开；标量返回生成 1 条；结构体返回拆成分量函数
+`_<field>`，`vec2_t` 额外生成打包进 `uint64_t` 的版本。运行层、三端适配层
+**零改动**。
+
+**剩余 20 个函数全是 mat44 / mat44f**（`mat44_mul` / `mat44_perspective` /
+`mat44_identity` 等）：4×4 矩阵有 16 个分量，展开后超过 `LUAX_MAX_ARGS` /
+`JSAPI_MAX_ARGS`（16），结构体返回也无法用现有 `joy_value` 表示。要接它们、并让
+脚本侧传 / 收单个 vec2 / mat44 对象而不是一长串标量，仍需 P2-A 正式版的
+`JOY_V_RECORD` + 字段 schema + 三端对象转换。
+
+**P6：源码组织（本刀已完成 A/B 步，零行为变化）**
+根因：旧 `joy_add.cmake` 一条 `file(GLOB "*.h" "*.c")` 把根目录 28 个自有 `.c`、
+`external/` 顶层 vendor `.c`、`test/*.c` 一起塞进宿主 exe，永远不需要显式列清单，
+于是目录结构长不出来，生成物、测试、第三方与手写源码长期混放。
+
+已落地：
+- **显式清单 + 源码注入**：新建 `cmake/JoySources.cmake`（显式清单替代 GLOB），
+  `cmake/JoyTargets.cmake` 只定义一个 `joy::all` **INTERFACE** target，用
+  `target_sources(INTERFACE)` 把清单里的 `.c` 编进宿主。主仓从
+  `include(joy_add.cmake)` + `joy_add_sources()` 改成 `add_subdirectory` +
+  `target_link_libraries(... joy::all)`；`joy_add.cmake` 保留为兼容 shim。
+  注入语义与旧方式一致：宿主编译定义照常作用于 joy 源码。
+  **曾拆成 `joy_core` / `joy_api` 两个 STATIC 库，已撤回**：`defs.h:52-65` 的
+  `PIXELS_PER_METER` 可经 `-D` 覆盖、换算函数是 `static inline`（每 TU 各固化
+  一份），静态库会让库内按默认 50、宿主按 `joy_topdown_template` 覆盖的 100，
+  同一进程两套坐标换算且编译全绿不报错。这类编译期可配置 inline 契约要支持
+  静态库，必须先把配置项做成 PUBLIC / option 显式传递；收益又主要在多宿主场景，
+  本仓只有一个 exe，不值得让外部项目一起承担切换成本。
+- **GLOB 下线**：清单显式列出每个 `.c`；空的 `jphysics.c`、条件空单元
+  `jgltf.c` / `jspine.c`（改为 `JOY_ENABLE_GLTF` / `JOY_ENABLE_SPINE` option）、
+  `test/*.c` 全部出宿主。`jimpl.c`（stb/dr 全仓唯一实现 TU）显式登记，不再靠巧合。
+- **LUT 归位**：`jlut.h` 原来把 `SIN_LUT` 与 `tan_lut` 两张各 205887 项的
+  `static long long`（共 5.44 MB）经 `jmath.h` → `joy.h` 复制进每个 TU；现在改为
+  `extern const` 声明 + `src/jlut.c` 唯一定义（77 份 → 1 份）。`jlut.c` 是纯数据
+  TU，只依赖 `jlut.h` 的 extern 声明与长度宏，不反向 include 消费方 `jmath.h`；
+  长度由 `jlut.h` 的 `JOY_SIN_LUT_LENGTH` / `JOY_TAN_LUT_LENGTH` 显式给出。
+  （曾放在数据 TU 内、需 include `jmath.h` 才能取到 `FP_LUT_SIZE` 的编译期
+  断言因形成反向依赖已移除。）
+- **生成物归位**：jmath 包装的声明与实现从 `joy.h` 里 222 行生成块 + 根目录
+  `jmath_api.c` 移到 `api/generated/jmath_wrappers.{h,c}`，主头不含生成代码。
+  `--check` 直接调用包装模块的 `check()` 汇总错误，去掉 `child_process`。
+
+**P6-C：目录分层（本刀完成）**
+- **`api/` 三分**：`tools/`（6 个生成器）、`idl/joy.idl`（唯一真相源）、
+  `generated/`（`coverage.md`、`thunks_generated.c`、`jmath_wrappers.{h,c}`），
+  `runtime/` 保持原样。CI / README / HANDOFF 的命令统一指向
+  `node api/tools/gen_bindings.js --check`。
+- **`src/` 平铺**：27 个 `.c` 全部平铺在 `src/` 一层，不再按域切子目录。
+  原因：早先的域是按 `j*.c` 文件名前缀猜的，未做符号级核对，内容与目录名
+  多处不符（`jprocmap.c` 是程序化地图生成却放 core，`jui.c` / `jtilemap.c`
+  是 UI 与地图解析却放 render）。目录一旦命名就承诺语义，承诺不兑现比平铺
+  更误导。现在归属只由 `cmake/JoySources.cmake` 的分组表达，且分组仅用于
+  阅读与 IDE 展示，不表示模块边界。
+  `jimpl.c` 改名 `src/vendor_impl.c`（stb/dr 唯一实现 TU 显式化）；
+  0 字节的 `jphysics.c` 删除；`JOY_ENABLE_PLUGINS` 接线到 `src/jmodule.c`。
+  人工 / 生成 / 第三方三类源码仍各有目录，互不混放。
+- **第三方目录保持根布局（曾收进 `vendor/`，已撤回）**：`external/`、`spine/`、
+  `msgpack/`、`SDL/` 仍平铺在 joy 根。撤回原因：`joy_topdown_template` 这类
+  外部仓库把 `third_party/joy/SDL/android-project` 直接写进 Android CI（`cp` /
+  `cd` / `sed` 的目录层数 / APK 产物路径共 6 处），并把
+  `${JOY_REPO_DIR}/msgpack|spine|SDL` 写进自己的 `add_subdirectory`；目录一移，
+  对方各平台构建全断，而收益只有本仓目录整洁。转发 CMakeLists 救不了物理目录，
+  git 软链在 Windows checkout 又不可靠。结论：第三方与引擎平级，不进 `vendor/`。
+- **`bindings/` 分链路**：每个后端拆成 `bindings/api/`（新链路）、
+  `bindings/host/`（仅 cs，提供宿主入口 `main.cpp` / `systems/input_system.h` 直接调用的 `csx_input_*` / `csx_host_*`）、
+  `bindings/legacy/`（旧手写胶水）。新增 `JOY_ENABLE_LEGACY_BINDINGS`（默认 ON），
+  `jluax.c` / `jsx.c` / `jcsx.c` 的旧注册块用 `#ifdef` 保护。host/ 是关掉开关后
+  实测暴露出来的真实依赖：宿主入口不属于旧业务胶水，必须始终编译。
+- **`examples/` 正名**：`test/` 里 5 个文件全是被注释的示例片段、无 main、从未被
+  任何 target 编译，改名 `examples/` 并明确不参与构建。
+- **拆 `joy.h`**：2585 行伞形头按行段切成 `include/joy/{defs,types,api}.h`
+  （326 / 587 / 1687 行），`joy.h` 只剩 16 行聚合门面；每个分域头自带 guard 与
+  `extern "C"`，系统头仍在 `extern "C"` 之外。`gen_bindings.js` 的
+  `DECL_SOURCES` 改为三个契约头（`defs.h` 里也夹着 18 条 `JOY_API` 声明，
+  不能只扫 `api.h`），`structs.js` 改从 `defs.h` + `types.h` + `jmath.h` 读类型。
+  `source` 分布 18 / 917 / 220，`--scan` 后 IDL 仍是 1155 条、开放 668 条不变。
+  83 处 `<joy/...>`、27 处 `"joy.h"`、45 处 `"external/..."` 一行未改：靠
+  include dir 顺序兼容。
+- **公开头全部归位**：根目录剩下的 9 个头一起搬进 `include/joy/`，根目录再无
+  散头，`include/joy/` 成为唯一公开头目录。随后清掉 4 个零引用头：
+  `janim.h`（孤儿）、`jgltf.h`（自称「说明性头」）、`jgltf.hpp` / `jspine.hpp`
+  （自称「仅供 C++/ECS 项目 include」的可选 RAII 包装，本仓没有 C++ TU）。
+  删除前全仓校验：0 处 `#include` 引用、生成器输入不含、CMake 的 `*.h` GLOB
+  全在 `external/`、`msgpack/`、`spine/`、`SDL/` 这些第三方目录，与自有头无关；`src/jgltf.c` / `jspine.c`
+  引用的是 `joy.h` 且默认因 `JOY_ENABLE_GLTF` / `JOY_ENABLE_SPINE=OFF` 不编译，
+  与这 4 个头无依赖。最终 `include/joy/` 8 个头，全部在编译链上
+  （49 个文件引用）。
+  配套 4 处改动：`include/joy/joy.h` 的生成头 include 改成相对路径
+  `../../api/generated/jmath_wrappers.h`（不再依赖 PRIVATE include 根）；
+  `jmath_wrap.js` 同步 `INCLUDE_LINE` 与 `JMATH` / `JOYH` 路径；
+  `gen_bindings.js` / `structs.js` 的 `jmath.h` 路径；
+  `JoyTargets.cmake` 加 `${JOY_ROOT}/include/joy` 到 PUBLIC，让 49 处
+  无前缀 include 一行不改。
+  **踩过的坑**：主仓 `CMakeLists.txt` 原用 `EXISTS "${JOY_SOURCE_DIR}/joy.h"`
+  探测 joy 源码树，`joy.h` 一搬走探测就失败，缓存里的旧值
+  （`../joy_topdown_template/third_party/joy`）被重新选中，导致
+  `msgpack` 找不到、configure 直接报错。已把探测标志改成新结构
+  独有的 `${JOY_SOURCE_DIR}/include/joy/joy.h`；自动探测会 FORCE 修正缓存，
+  换用旧版 joy 源码树时会明确报「找不到 joy 源码树」而不是静默用错目录。
+
+**验证**：`--check OK: 1155 IDL entries`；两个 Release `dotnet build` 0/0；
+`cmake --build` 0 error；`--smoke 180` exit 0；`JOY_ENABLE_LEGACY_BINDINGS=OFF`
+单独全量编译通过（69 个 legacy `.c` 退出构建），恢复 ON 后冒烟全绿。
+
+**剩余（D/E）**：`JOY_V_RECORD` + 字段 schema（可让 `jmath_wrappers.*` 整层消失、
+接上 20 个 mat44、解开 P4 迁移）；把 1687 行的 `api.h` 再按域细拆（需先人工补齐
+分节标记）；`JOY_ENABLE_LEGACY_BINDINGS=OFF` 下业务 C# 仍调用旧 `Joy.*` API，
+要等 P4 迁移完才能真正关掉旧胶水；`examples/` 若要编译验证需先补 main。
 
 ---
 

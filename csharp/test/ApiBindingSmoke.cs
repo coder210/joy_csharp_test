@@ -14,6 +14,7 @@ namespace JoyGame
     {
         internal static bool Passed { get; private set; }
         internal static string Detail { get; private set; } = "not-run";
+        private static string _vec2Detail = "n/a";
 
         private static void CreateAndDrop(ulong seed)
         {
@@ -24,7 +25,8 @@ namespace JoyGame
         }
 
         /* 真正调用已开放的 L0 API 并校验返回值，而不只是「注册成功 + argc 守卫」。
-         * 两条都是纯标量、无句柄、无窗口上下文，可在 dummy 驱动下稳定复现。 */
+         * 这些都是纯标量、无句柄、无窗口上下文，可在 dummy 驱动下稳定复现；
+         * Jmath* 三条用于确认 jmath.h 的包装层确实能被脚本调用。 */
         private static bool CheckRealCalls()
         {
             // jpm_wave_seed(base, wave) = base + wave * 1000003（jprocmap.c:285）
@@ -36,7 +38,16 @@ namespace JoyGame
             ulong h3 = Joy.Api.Bindings.Murmur3Hash("Joy");
             bool hashOk = h1 != 0 && h1 == h2 && h1 != h3;
 
-            return seedOk && hashOk;
+            // jmath.h 的 vec2_add / vec2_dot：{1,2} + {3,4} == {4,6}，点积 11
+            float vx = Joy.Api.Bindings.JmathVec2AddX(1f, 2f, 3f, 4f);
+            float vy = Joy.Api.Bindings.JmathVec2AddY(1f, 2f, 3f, 4f);
+            float dot = Joy.Api.Bindings.JmathVec2Dot(1f, 2f, 3f, 4f);
+            _vec2Detail = vx + "," + vy + " dot=" + dot;
+            bool vec2Ok = System.Math.Abs(vx - 4f) < 0.001f
+                       && System.Math.Abs(vy - 6f) < 0.001f
+                       && System.Math.Abs(dot - 11f) < 0.001f;
+
+            return seedOk && hashOk && vec2Ok;
         }
 
         /* P4 前置检查：新链路 public 入口不能把 IntPtr / 裸句柄暴露给业务层。 */
@@ -85,7 +96,8 @@ namespace JoyGame
                 Detail = "ticks=" + ticks + " cache=" + cached
                        + " live=" + live0 + "->" + liveAfter + "->" + liveNow
                        + " destroyed=" + (deadNow - dead0)
-                       + " real=" + realOk + " opaque=" + opaqueOk;
+                       + " real=" + realOk + " opaque=" + opaqueOk
+                       + " vec2=" + _vec2Detail;
                 Joy.Host.log("[api.cs] " + (Passed ? "PASS " : "FAIL ") + Detail);
             }
             catch (Exception ex)

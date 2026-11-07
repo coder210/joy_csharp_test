@@ -30,10 +30,11 @@ jobs:
           node-version: '20'
 
       - name: Check binding API contract
-        # joy 的 api/joy.idl + coverage.md 是入库的生成物；此处只校验不写文件，
-        # 防止改了 joy.h / IDL 却忘记重新生成，也防止手改生成物。
+        # joy 的 api/idl/joy.idl + coverage.md + generated/jmath_wrappers.{h,c}
+        # 是入库的生成物；此处只校验不写文件，防止改了契约头 / IDL 却忘记
+        # 重新生成，也防止手改生成物。
         shell: pwsh
-        run: node third_party/joy/api/gen_bindings.js --check
+        run: node third_party/joy/api/tools/gen_bindings.js --check
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4

@@ -158,7 +158,7 @@ git submodule update --init --recursive
 ```
 
 `third_party/joy` 指向 `coder210/joy` 的固定提交，构建脚本默认就用它，无需再传 `-DJOY_SOURCE_DIR`。
-要临时换用另一份 joy 源码树时，仍可 `-DJOY_SOURCE_DIR=<含 joy.h 的目录>` 覆盖。
+要临时换用另一份 joy 源码树时，仍可 `-DJOY_SOURCE_DIR=<含 include/joy/joy.h 的目录>` 覆盖。
 
 ## 构建与运行（Windows）
 
@@ -267,7 +267,7 @@ ASCII 降级分支，以便将来换回非 CJK 字体时不会乱码。
 |---|---|---|
 | 自动生成（白名单） | 仅 `font_create` / `image_create` 两个 joy C API | `modules/cs/gen_csclib.js` 的 `ALLOW_NAMES` → 生成 `bindings/csclib_generated.c` 与 `scripts/InternalCalls.cs` |
 | 手写热点 | `Joy.Draw`（矩形、线、文字、贴图）、`Joy.Input`（键鼠轮询）、`Joy.Host`（日志 / 退出） | C 实现：`modules/cs/bindings/csclib_{draw,input,host}.c`；C# 声明：`modules/cs/scripts/NativeCalls.cs` |
-| IDL 驱动（P1/P2，三端） | 三端同名 `Joy.Api.Bindings.*`；C# 无 `IntPtr`，Lua / JS 句柄为不透明对象 | `api/gen_bindings.js` → 共享 thunk + `api_generated.c` / `lapi.c` / `japi.c` |
+| IDL 驱动（P1/P2，三端） | 三端同名 `Joy.Api.Bindings.*`；C# 无 `IntPtr`，Lua / JS 句柄为不透明对象 | `api/tools/gen_bindings.js` → 共享 thunk + `api_generated.c` / `lapi.c` / `japi.c` |
 | C# 程序集 | 上述几类 `public` 声明统一编入 `Joy.Bindings.dll` | `modules/cs/Joy.Bindings.csproj`（显式列出 `scripts/*.cs`） |
 
 旧链路只暴露业务实际调用的 internal call，由 `ALLOW_NAMES` 白名单控制，
@@ -301,10 +301,10 @@ joy 子项目的 `api/` 放一份与脚本语言无关的接口清单，让 Lua 
 共用同一套对象模型与所有权规则：
 
 ```powershell
-node third_party/joy/api/gen_bindings.js             # 重生成全部 4 个生成物
-node third_party/joy/api/gen_bindings.js --enable L1  # 按级别批量开放（逐条过闸）
-node third_party/joy/api/gen_bindings.js --scan       # 从 joy.h 更新 joy.idl
-node third_party/joy/api/gen_bindings.js --check      # CI 校验，不写文件
+node third_party/joy/api/tools/gen_bindings.js             # 重生成全部 4 个生成物
+node third_party/joy/api/tools/gen_bindings.js --enable L1  # 按级别批量开放（逐条过闸）
+node third_party/joy/api/tools/gen_bindings.js --scan       # 从分域头更新 joy.idl
+node third_party/joy/api/tools/gen_bindings.js --check      # CI 校验，不写文件
 ```
 
 `joy.idl`（每条 API 一行、人工可改）与 4 个生成物都入库；`--scan` 只刷新自动字段，
@@ -347,7 +347,7 @@ Joy.Api.Bindings.*（强类型，无 IntPtr） → Joy.Api.Native.*（internal c
 
 1. `checkout` 时递归拉取子模块（joy 提交号由 gitlink 固定，绑定模块随之就位）
 2. 装 Node 20 与 .NET 8（C# 运行时由 joy 子模块提供，无需安装 Mono）
-3. `node third_party/joy/api/gen_bindings.js --check` 校验 IDL 与 4 个生成物同步（不写文件）
+3. `node third_party/joy/api/tools/gen_bindings.js --check` 校验 IDL 与 4 个生成物同步（不写文件）
 4. `dotnet build` 依次构建 joy 的 `Joy.Bindings.csproj` 与本仓 `JoyGame.csproj`，都输出到 `build/csharp`
 5. CMake + MSVC 构建宿主（`MODULES cs lua js` 编入 joy 的三端绑定源码；post-build 把 `Joy.Bindings.dll` 追加进 `lib/`）
 6. `joy_csharp_test_app.exe --smoke 180` 无窗口冒烟（必须 `[api] selftest PASS`、`[api] lua selftest PASS`、`[api] js selftest PASS`、`[api.cs] PASS`、`[smoke] PASS`）
